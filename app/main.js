@@ -13,7 +13,8 @@ switch (command) {
     createGitDirectory();
     break;
   case "cat-file":
-    const hash = process.argv[4];
+    let hash = process.argv[4];
+    if(!hash) hash = process.argv[3];
     catFile(hash);
     break;
   case "hash-object":
@@ -72,13 +73,11 @@ function createCommitTree(){
   const treeSha = process.argv[3];// current commit
   const parentSha = process.argv[process.argv.indexOf("-p")+1];
   const message = process.argv[process.argv.indexOf("-m")+1];
-  const contentBuffer = Buffer.from(`tree ${treeSha}\n author zainan Ali <zainanzaher09@gmail.com> ${Date.now()}\n commiter zainan Ali <zainanzaher09@gmail.com> ${Date.now()}\n\n ${message}`);
+  const contentBuffer = Buffer.from(`tree ${treeSha}\nauthor zainan Ali <zainanzaher09@gmail.com> ${Date.now()}\ncommiter zainan Ali <zainanzaher09@gmail.com> ${Date.now()}\n\n ${message}`);
   const commitBuffer = Buffer.concat([Buffer.from(`commit ${contentBuffer.length}\x00`), contentBuffer])
   const commitHash = crypto.createHash("sha1").update(commitBuffer).digest("hex");
   try {
-
     writeBlobFile(commitHash, commitBuffer);
-    console.log(commitHash);
   } catch(er){
     console.error("An Error Occured");
   }
@@ -92,14 +91,13 @@ function writeBlobFile(hash, data){
   try {
     fs.mkdirSync(dirPath);
 
-  }catch(er){console.log(er)};
+  }catch(er){console.error(er)};
   const fileToCreate = path.join(dirPath, fileName);
   const compressedData = zlib.deflateSync(data);
   fs.writeFileSync(fileToCreate, compressedData);
 }
 
 function saveBlobFile(cur_path){
-  console.log(cur_path);
   // data formats >> `blob 30\x00{content here}
   const data = `blob ${fs.statSync(cur_path).size}\x00${fs.readFileSync(cur_path)}`
   // sha1 converts it into cryptographic hash object that produces 160-bit (20-byte) hash value.
@@ -111,7 +109,6 @@ function saveBlobFile(cur_path){
 
 function writeTreePath(current_path) {
   let dirs = fs.readdirSync(current_path);
-  console.log(dirs);
   dirs = dirs.filter(dir => dir !== ".git" && dir !== "main.js" && dir !== ".codecrafters")
     .map(name => {
       const fullPath = path.join(current_path, name);
@@ -128,7 +125,6 @@ function writeTreePath(current_path) {
       }
       return ["", "", ""];
     });
-  console.log(dirs);
   const reduced_dir = dirs.reduce((acc, [mode, name, hash]) => {
     if (hash) {
       const a = Buffer.concat([
@@ -139,18 +135,13 @@ function writeTreePath(current_path) {
       console.log(a);
       return a
     }
-    console.log(acc);
     return acc;
   }, Buffer.alloc(0));
-  console.log("Reduced Dir = ", reduced_dir)
   const entriesCount = dirs.filter(dir => dir[2]).length; // Count valid hashes
-  console.log("entries = ", entriesCount)
 
   const tree = Buffer.concat([Buffer.from(`tree ${entriesCount}\x00`), reduced_dir]);
-    console.log(tree);
   // Directly write the tree without compressing again
   const treeHash = crypto.createHash("sha1").update(tree).digest("hex");
-  console.log(treeHash);
   writeBlobFile(treeHash, tree);
   
   return treeHash;
@@ -159,7 +150,8 @@ function writeTreePath(current_path) {
 
 
 function writeTree(){
-  const hash = writeTreePath(".");
+  let treeHash = writeTreePath(".");
+  console.log(treeHash)
 }
 
 function createObject(){
@@ -171,12 +163,8 @@ function createObject(){
   // // Now I will convert the content to sha1 hash - so that we can use it's cryptic name to store data.
   // // following from before first 2 characters directory name - then remaing 38 subdirectory
   const hash = crypto.createHash("sha1").update(content).digest("hex");
-  // // now we are gonna create a path (.git/objects/(2characters)/(38characters));
-  const directory = path.join(process.cwd(), ".git", "objects");
-  const parentHashDirectory = path.join(directory, hash.slice(0,2));
-  fs.mkdirSync(parentHashDirectory, { recursive: true });
-  const contentFile = path.join(parentHashDirectory, hash.slice(2));
-  fs.writeFileSync(contentFile, zlib.deflateSync(content));
+  // // we pass the hash and contents of the file to the function which then creates the directory and file.
+  writeBlobFile(hash, content);
   process.stdout.write(hash);
 }
 
