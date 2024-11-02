@@ -4,7 +4,6 @@ const zlib = require("zlib")
 const crypto = require("crypto");
 
 // You can use print statements as follows for debugging, they'll be visible when running tests.
-console.error("Logs from your program will appear here!");
 
 // Uncomment this block to pass the first stage
 const command = process.argv[2];
@@ -21,8 +20,126 @@ switch (command) {
     createObject();
 
     break;
+  case "ls-tree":
+    lsTree();
+    break;
+  case "write-tree":
+    writeTree();
+    break;
   default:
     throw new Error(`Unknown command ${command}`);
+}
+
+function lsTree() {
+  const hash = process.argv[3];
+  const objectPath = path.join(".git", "objects", hash.slice(0, 2), hash.slice(2));
+  
+  const fileData = fs.readFileSync(objectPath);
+  const uncompressedData = zlib.inflateSync(fileData);
+  const nullIndex = uncompressedData.indexOf(0);
+  const header = uncompressedData.subarray(0, nullIndex).toString();
+  const content = uncompressedData.subarray(nullIndex + 1);  
+  if(!header.startsWith("tree")){
+    console.error("Invalid tree");
+  }
+
+  let offset = 0;
+  const entries = []
+  while (offset < content.length){
+    const spaceIndex = content.indexOf(0x20, offset);
+    const mode = content.subarray(offset, spaceIndex).toString();
+    offset = spaceIndex + 1;
+    let nameIndex = content.indexOf(0, offset); 
+    const name = content.subarray(offset, nameIndex).toString();
+    offset = nameIndex + 1;
+    const hashBuffer = content.subarray(offset, offset + 20);
+    let cur_hash = hashBuffer.toString("hex");
+    offset += 20; 
+    entries.push({mode, name, hash: cur_hash })
+  }
+
+  console.log("\n\n")
+  entries.forEach(entry => {
+    console.log(`${entry.mode} ${entry.mode === "100644" ? "blob" : "tree"} ${entry.hash}    ${entry.name}`)
+  })
+}
+
+function writeBlobFile(hash, data){
+  const dir = hash.slice(0,2);
+  const fileName = hash.slice(2);
+  const dirPath = path.join(process.cwd(),".git", "objects", dir);
+  // We will create a directory
+  try {
+    fs.mkdirSync(dirPath);
+
+  }catch(er){console.log(er)};
+  const fileToCreate = path.join(dirPath, fileName);
+  const compressedData = zlib.deflateSync(data);
+  fs.writeFileSync(fileToCreate, compressedData);
+}
+
+function saveBlobFile(cur_path){
+  console.log(cur_path);
+  // data formats >> `blob 30\x00{content here}
+  const data = `blob ${fs.statSync(cur_path).size}\x00${fs.readFileSync(cur_path)}`
+  // sha1 converts it into cryptographic hash object that produces 160-bit (20-byte) hash value.
+  // its encoded in hex format - 40 characters
+  const hash = crypto.createHash("sha1").update(data).digest("hex");
+  writeBlobFile(hash, data);
+  return hash;
+}
+
+function writeTreePath(current_path) {
+  let dirs = fs.readdirSync(current_path);
+  console.log(dirs);
+  dirs = dirs.filter(dir => dir !== ".git" && dir !== "main.js" && dir !== ".codecrafters")
+    .map(name => {
+      const fullPath = path.join(current_path, name);
+      console.log(fullPath)
+      const fileProperties = fs.statSync(fullPath);
+      if (fileProperties.isDirectory()) {
+        const a = ["40000", name, writeTreePath(fullPath)]; // Recursive call
+        console.log(a)
+        return a
+      } else if (fileProperties.isFile()) {
+        const a =  ["100644", name, saveBlobFile(fullPath)];
+        console.log(a)
+        return a
+      }
+      return ["", "", ""];
+    });
+  console.log(dirs);
+  const reduced_dir = dirs.reduce((acc, [mode, name, hash]) => {
+    if (hash) {
+      const a = Buffer.concat([
+        acc,
+        Buffer.from(`${mode} ${name}\x00`),
+        Buffer.from(hash, "hex")
+      ]);
+      console.log(a);
+      return a
+    }
+    console.log(acc);
+    return acc;
+  }, Buffer.alloc(0));
+  console.log("Reduced Dir = ", reduced_dir)
+  const entriesCount = dirs.filter(dir => dir[2]).length; // Count valid hashes
+  console.log("entries = ", entriesCount)
+
+  const tree = Buffer.concat([Buffer.from(`tree ${entriesCount}\x00`), reduced_dir]);
+    console.log(tree);
+  // Directly write the tree without compressing again
+  const treeHash = crypto.createHash("sha1").update(tree).digest("hex");
+  console.log(treeHash);
+  writeBlobFile(treeHash, tree);
+  
+  return treeHash;
+}
+
+
+
+function writeTree(){
+  const hash = writeTreePath(".");
 }
 
 function createObject(){
@@ -45,7 +162,9 @@ function createObject(){
 
 function catFile(hash){
   const content = fs.readFileSync(path.join(process.cwd(), ".git", "objects", hash.slice(0, 2), hash.slice(2)));
+  console.log(content)
   const uncompressedData = zlib.unzipSync(content);
+  console.log(uncompressedData);
   process.stdout.write(uncompressedData.toString().split("\x00")[1]);
 }
 
