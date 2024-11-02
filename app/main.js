@@ -26,6 +26,9 @@ switch (command) {
   case "write-tree":
     writeTree();
     break;
+  case "commit-tree":
+    createCommitTree();
+    break;
   default:
     throw new Error(`Unknown command ${command}`);
 }
@@ -62,6 +65,23 @@ function lsTree() {
   entries.forEach(entry => {
     console.log(`${entry.mode} ${entry.mode === "100644" ? "blob" : "tree"} ${entry.hash}    ${entry.name}`)
   })
+}
+
+
+function createCommitTree(){
+  const treeSha = process.argv[3];// current commit
+  const parentSha = process.argv[process.argv.indexOf("-p")+1];
+  const message = process.argv[process.argv.indexOf("-m")+1];
+  const contentBuffer = Buffer.from(`tree ${treeSha}\n author zainan Ali <zainanzaher09@gmail.com> ${Date.now()}\n commiter zainan Ali <zainanzaher09@gmail.com> ${Date.now()}\n\n ${message}`);
+  const commitBuffer = Buffer.concat([Buffer.from(`commit ${contentBuffer.length}\x00`), contentBuffer])
+  const commitHash = crypto.createHash("sha1").update(commitBuffer).digest("hex");
+  try {
+
+    writeBlobFile(commitHash, commitBuffer);
+    console.log(commitHash);
+  } catch(er){
+    console.error("An Error Occured");
+  }
 }
 
 function writeBlobFile(hash, data){
