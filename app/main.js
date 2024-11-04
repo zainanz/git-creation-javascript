@@ -41,7 +41,7 @@ async function clone(){
   // step 1 retrieve data
   const url = process.argv[3];
   console.log(url);
-  const dir = process.argv[4];
+  let dir = process.argv[4];
   if (!dir){
     dir = ".";
   } else {
@@ -53,14 +53,80 @@ async function clone(){
 
   // step 3 - get pack data from the host;
   const {packData, head} = await fetchPackData(url);
+  console.log(packData);
   // step 4 - parse and store data
+  parseAndStorePackFile(packData);
   // step 5 - write parse data;
 }
 
+function parsePackObject(buffer, offset){
+ //The Buffer starts with 8 bits 
+  // first 4 = types, other 4 = size;
+  // 11001010 >> 4 basically ---> Shifts the beginning with 4 0s.. so it becomes 00001100 
+  // This way we have isolated the type.
+  // Type has 0, 1, 2, 3, 4;
+  // 0x07 equates to 00000111 basically 7 2^0, 2^1, 2^2 > 1+2+4 = 7 but that 7 holds no value to us.. whats important is it binary form.
+  // 00000111 & 00001100 = 0000100 which is 4;
+  // basicaly 1 & 1 = 1; 1&0 = 0 and 0&0 =0; why do we do this? Its the way we extract the type..
+  // so 111 will always give us the last 3 digits.. which we need to get the type - then why are we even given 4 digits?
+  // 00000[1]11 => Even tho its useless and its actually future proofing.. what if they make more in the future? by for now, its totally useless for us.
+  // The 4th bit (the leftmost bit in the nibble) being 1 serves as an indicator that the byte is formatted to contain a valid object type and helps maintain a consistent structure across different types of objects.
+  const type = (buffer[offset] >> 4) & 0x07; // Read the type
+
+  // as I stated before lower bits contains size there for according to our dummy data
+  //11001010 is added to 00001111 which is basically 0x0F = like 7 F in hex is 15 decimal;
+  // therefore it lets us read it upper half equates to 0 bcuz 0x0F only has 4 1s in the lower half and upperhalf has all 0.
+  // 11001010 & 00001111 -> 00001010 which is 10 in decimals;
+  let size = buffer[offset] & 0x0F; // Read size
+}
+
+function parseAndStorePackFile(buffer, dir = "."){
+  const header = buffer.slice(0, 8);
+  const objectCount = buffer.readUInt32BE(8);
+  console.log(objectCount);
+
+  let offset = 8; // Start reading after the header
+
+  for (let i = 0; i < objectCount; i++) {
+      const [parsedBytes, obj] = parsePackObject(buffer, offset);
+      offset += parsedBytes;
+      
+      // Store the object in the objects directory
+      // storeObject(obj, gitDir);
+  }
+
+
+}
+
 async function fetchPackData(url){
-  const gitUploadPackUrl = `${url}/info/refs?service=git-upload-pack`;
-  const response = await axios.get(gitUploadPackUrl);
-  console.log(response.data);
+  // const gitUploadPackUrl = `${url}/info/refs?service=git-upload-pack`;
+  // const response = await axios.get(gitUploadPackUrl);
+  // const lines = response.data.split('\n')
+  const lines = [
+    '001e# service=git-upload-pack',
+    '00000153bea4a79f49ef61240780b957eb393cf60df881a3 HEAD\x00multi_ack thin-pack side-band side-band-64k ofs-delta shallow deepen-since deepen-not deepen-relative no-progress include-tag multi_ack_detailed allow-tip-sha1-in-want allow-reachable-sha1-in-want no-done symref=HEAD:refs/heads/main filter object-format=sha1 agent=git/github-0c410e9f6fc4',
+    '003dbea4a79f49ef61240780b957eb393cf60df881a3 refs/heads/main',
+    '0000'
+  ]
+  let packHash = "";
+  let headName = ""
+  for (const line of lines) {
+    if ((line.includes("refs/heads/master") && line.includes("0032")) || (line.includes("refs/heads/main") && line.includes("003d"))) {
+        const parts = line.split(" ");
+        headName = parts[1].split("/")[2];
+        packHash = parts[0].substring(4);
+        break;
+    }
+  }
+
+  const packFileResponse = await axios.post(`${url}/git-upload-pack`, Buffer.from(`0032want ${packHash}\n00000009done\n`), {
+    headers: {
+        "Content-Type": "application/x-git-upload-pack-request"
+    },
+    responseType: "arraybuffer"
+  });
+
+  return { packData: packFileResponse.data, head: headName }; 
 }
 
 
@@ -214,3 +280,65 @@ function createGitDirectory() {
   fs.writeFileSync(path.join(process.cwd(), ".git", "HEAD"), "ref: refs/heads/main\n");
   console.log("Initialized git directory");
 }
+
+/**
+function parseAndStorePackFile(buffer, gitDir) {
+    const header = buffer.slice(0, 8);
+    const objectCount = buffer.readUInt32BE(4); // Read the number of objects
+    let offset = 8; // Start reading after the header
+
+    for (let i = 0; i < objectCount; i++) {
+        const [parsedBytes, obj] = parsePackObject(buffer, offset);
+        offset += parsedBytes;
+        
+        // Store the object in the objects directory
+        storeObject(obj, gitDir);
+    }
+}
+
+function parsePackObject(buffer, offset) {
+    const type = (buffer[offset] >> 4) & 0x07; // Read the type
+    let size = buffer[offset] & 0x0F; // Read size
+    let sizeOffset = 4;
+
+    while (buffer[offset] >= 128) {
+        offset++;
+        size += (buffer[offset] & 0x7F) << sizeOffset;
+        sizeOffset += 7;
+    }
+
+    offset++; // Move past the current byte
+
+    // Read the actual object data
+    const data = buffer.slice(offset, offset + size);
+    offset += size;
+
+    // For simplicity, we'll treat the type as a string (1: commit, 2: tree, 3: blob)
+    const typeString = ["commit", "tree", "blob"][type - 1];
+
+    return [offset, { type: typeString, content: data }];
+}
+
+function storeObject({ type, content }, gitDir) {
+    const hash = createObjectHash(content);
+    const objectDir = path.join(gitDir, ".git", "objects", hash.substring(0, 2));
+    const objectFile = path.join(objectDir, hash.substring(2));
+
+    // Create the directory if it doesn't exist
+    fs.mkdirSync(objectDir, { recursive: true });
+    const compressed = zlib.deflateSync(content);
+    
+    // Write the compressed object to the file
+    fs.writeFileSync(objectFile, compressed);
+}
+
+function createObjectHash(content) {
+    // This function would generate a SHA-1 hash of the object
+    const crypto = require("crypto");
+    const hash = crypto.createHash("sha1");
+    hash.update(content);
+    return hash.digest("hex");
+} 
+
+* 
+ */
