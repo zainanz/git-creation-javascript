@@ -2,7 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const zlib = require("zlib")
 const crypto = require("crypto");
-
+const axios = require("axios");
 // You can use print statements as follows for debugging, they'll be visible when running tests.
 
 // Uncomment this block to pass the first stage
@@ -30,9 +30,39 @@ switch (command) {
   case "commit-tree":
     createCommitTree();
     break;
+  case "clone":
+    clone();
+    break;
   default:
     throw new Error(`Unknown command ${command}`);
 }
+
+async function clone(){
+  // step 1 retrieve data
+  const url = process.argv[3];
+  console.log(url);
+  const dir = process.argv[4];
+  if (!dir){
+    dir = ".";
+  } else {
+    fs.mkdirSync(dir, {recursive:true}) 
+  }
+  // step 2 initialize git
+
+  // init();
+
+  // step 3 - get pack data from the host;
+  const {packData, head} = await fetchPackData(url);
+  // step 4 - parse and store data
+  // step 5 - write parse data;
+}
+
+async function fetchPackData(url){
+  const gitUploadPackUrl = `${url}/info/refs?service=git-upload-pack`;
+  const response = await axios.get(gitUploadPackUrl);
+  console.log(response.data);
+}
+
 
 function lsTree() {
   const hash = process.argv[3];
